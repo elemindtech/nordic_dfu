@@ -18,6 +18,8 @@ import no.nordicsemi.android.dfu.DfuServiceController
 import no.nordicsemi.android.dfu.DfuServiceInitiator
 import no.nordicsemi.android.dfu.DfuServiceListenerHelper
 import java.util.*
+import no.nordicsemi.android.dfu.DfuBaseService
+import no.nordicsemi.android.dfu.DfuLogListener
 
 class NordicDfuPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
 
@@ -26,8 +28,9 @@ class NordicDfuPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHan
     private var pendingResult: MethodChannel.Result? = null
     private var methodChannel: MethodChannel? = null
     private var eventChannel: EventChannel? = null
+    private var logChannel: BasicMessageChannel<Any>? = null
     private var sink: EventChannel.EventSink? = null
-
+    private var logListener: DfuLogListener? = null
     private var controller: DfuServiceController? = null
     private var hasCreateNotification = false
 
@@ -39,20 +42,53 @@ class NordicDfuPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHan
 
         eventChannel = EventChannel(binding.binaryMessenger, "dev.steenbakker.nordic_dfu/event")
         eventChannel!!.setStreamHandler(this)
+
+        logChannel = BasicMessageChannel(
+            binding.binaryMessenger,
+            "dev.steenbakker.nordic_dfu/log",
+            StandardMessageCodec.INSTANCE
+        )
+
+        logChannel!!.setStreamHandler(this)
+        logListener = DfuLogListener { deviceAddress, level, message ->
+            messageChannel.send(
+                mapOf(
+                    "level" to mapLogLevel(level),
+                    "message" to message
+                )
+            ), address)
+        }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPluginBinding) {
         mContext = null
         methodChannel = null
         eventChannel = null
+        logChannel = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "startDfu" -> initiateDfu(call, result)
             "abortDfu" -> abortDfu()
+            "attachLoggerCallback" -> attachLoggerCallback(result)
+            "removeLoggerCallback" -> removeLoggerCallback(result)
             else -> result.notImplemented()
         }
+    }
+
+    private fun attachLoggerCallback(result: MethodChannel.Result) {
+        if (mContext != null) {
+            DfuServiceListenerHelper.registerLogListener(mContext!!, logListener)
+        }
+        result.succes(null)
+    }
+
+    private fun removeLoggerCallback(result: MethodChannel.Result) {
+        if (mContext != null) {
+            DfuServiceListenerHelper.unregisterLogListener(logListener)
+        }
+        result.succes(null)
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
@@ -305,4 +341,14 @@ class NordicDfuPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHan
             }
         }
 
+}
+
+fun mapLogLevel(level: Int) = when (level) {
+    DfuBaseService.LOG_LEVEL_DEBUG -> "DEBUG"
+    DfuBaseService.LOG_LEVEL_INFO -> "INFO"
+    DfuBaseService.LOG_LEVEL_APPLICATION -> "APPLICATION"
+    DfuBaseService.LOG_LEVEL_VERBOSE -> "VERBOSE"
+    DfuBaseService.LOG_LEVEL_WARNING -> "WARNING"
+    DfuBaseService.LOG_LEVEL_ERROR -> "ERROR"
+    else -> "UNKNOWN"
 }

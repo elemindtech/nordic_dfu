@@ -10,6 +10,8 @@ public class SwiftNordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     var pendingResult: FlutterResult?
     var deviceAddress: String?
     private var dfuController : DFUServiceController!
+    var messageConnector : FlutterBasicMessageChannel
+    var loggerEnable : Bool = false
     
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = SwiftNordicDfuPlugin(registrar)
@@ -18,13 +20,14 @@ public class SwiftNordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
         
         let event = FlutterEventChannel(name:
                                             "dev.steenbakker.nordic_dfu/event", binaryMessenger: registrar.messenger())
-
+        
         registrar.addMethodCallDelegate(instance, channel: method)
         event.setStreamHandler(instance)
     }
     
     init(_ registrar: FlutterPluginRegistrar) {
         self.registrar = registrar
+        messageConnector = FlutterBasicMessageChannel(name: "dev.steenbakker.nordic_dfu/log", binaryMessenger: registrar.messenger())
         super.init()
     }
 
@@ -32,8 +35,20 @@ public class SwiftNordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
         switch call.method {
         case "startDfu": initializeDfu(call, result)
         case "abortDfu" : abortDfu()
+        case "attachLoggerCallback" : attachLoggerCallback(result: result)
+        case "removeLoggerCallback" : removeLoggerCallback(result: result)
         default: result(FlutterMethodNotImplemented)
         }
+    }
+    
+    private func attachLoggerCallback(result: @escaping FlutterResult) {
+        loggerEnable = true;
+        result(nil)
+    }
+    
+    private func removeLoggerCallback(result: @escaping FlutterResult) {
+        loggerEnable = false;
+        result(nil)
     }
     
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
@@ -191,5 +206,8 @@ public class SwiftNordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     //MARK: - LoggerDelegate
     public func logWith(_ level: LogLevel, message: String) {
         print("\(level.name()): \(message)")
+        if(loggerEnable){
+            messageConnector.sendMessage(["level": level.name(), "message" : message])
+        }
     }
 }
