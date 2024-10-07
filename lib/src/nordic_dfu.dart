@@ -209,7 +209,7 @@ class NordicDfu {
         .invokeMethod('attachLoggerCallback', <String, dynamic>{});
   }
 
-  /// Attach remove logger
+  /// Remove logger
   Future<void> removeLoggerCallback() {
     _dfuLoggerCallback = null;
     return _methodChannel
