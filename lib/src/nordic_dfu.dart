@@ -10,19 +10,70 @@ import 'package:nordic_dfu/src/parameters/android_special_parameter.dart';
 import 'package:nordic_dfu/src/parameters/darwin_parameters.dart';
 import 'package:nordic_dfu/src/parameters/ios_special_parameter.dart';
 
-/// A singleton class to handle the Nordic DFU process.
+/// Callback for when dfu status has changed
+/// [address] Device with error
+typedef DfuCallback = void Function(String address);
+
+/// Callback for when dfu has error
+/// [address] Device with error
+/// [error] Error which occurs
+/// [errorType] Error type which has occured
+/// [message] Message that has been thrown with error
+typedef DfuErrorCallback = void Function(
+  String address,
+  int error,
+  int errorType,
+  String message,
+);
+
+/// Callback for when the dfu progress has changed
+/// [address] Device with dfu
+/// [percent] Percentage dfu completed
+/// [speed] Speed of the dfu proces
+/// [avgSpeed] Average speed of the dfu process
+/// [currentPart] Current part being uploaded
+/// [totalParts] All parts that need to be uploaded
+typedef DfuProgressCallback = void Function(
+  String address,
+  int percent,
+  double speed,
+  double avgSpeed,
+  int currentPart,
+  int totalParts,
+);
+
+/// Callback for registering log events
+typedef DFULoggerCallback = void Function(String level, String message);
+
+/// This singleton handles the DFU process.
 class NordicDfu {
   /// Factory for initiating the Singleton
   factory NordicDfu() => _singleton;
 
-  NordicDfu._internal();
+  NordicDfu._internal() {
+    _logChannel.setMessageHandler((data) async {
+      if (data is Map) {
+        _dfuLoggerCallback?.call(
+          data['level'] as String,
+          data['message'] as String,
+        );
+      }
+      return null;
+    });
+  }
+
   static final NordicDfu _singleton = NordicDfu._internal();
 
   static const String _methodChannelName = 'dev.steenbakker.nordic_dfu/method';
   static const String _eventChannelName = 'dev.steenbakker.nordic_dfu/event';
+  static const String _logChannelName = 'dev.steenbakker.nordic_dfu/log';
 
   static const MethodChannel _methodChannel = MethodChannel(_methodChannelName);
   static const EventChannel _eventChannel = EventChannel(_eventChannelName);
+  static const _logChannel =
+      BasicMessageChannel(_logChannelName, StandardMessageCodec());
+
+  DFULoggerCallback? _dfuLoggerCallback;
 
   StreamSubscription<void>? _events;
   final Map<String, DfuEventHandler> _eventHandlerMap = {};
@@ -176,5 +227,21 @@ class NordicDfu {
   void dispose() {
     _events?.cancel();
     _events = null;
+  }
+
+  /// Attach flutter logger
+  Future<void> attachLoggerCallback(
+    DFULoggerCallback callback,
+  ) {
+    _dfuLoggerCallback = callback;
+    return _methodChannel
+        .invokeMethod('attachLoggerCallback', <String, dynamic>{});
+  }
+
+  /// Remove logger
+  Future<void> removeLoggerCallback() {
+    _dfuLoggerCallback = null;
+    return _methodChannel
+        .invokeMethod('removeLoggerCallback', <String, dynamic>{});
   }
 }
