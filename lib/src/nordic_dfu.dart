@@ -36,18 +36,36 @@ typedef DfuProgressCallback = void Function(
   int totalParts,
 );
 
+/// Callback for registering log events
+typedef DFULoggerCallback = void Function(String level, String message);
+
 /// This singleton handles the DFU process.
 class NordicDfu {
   /// Factory for initiating the Singleton
   factory NordicDfu() => _singleton;
 
-  NordicDfu._internal();
+  NordicDfu._internal() {
+    _logChannel.setMessageHandler((data) async {
+      if (data is Map) {
+        _dfuLoggerCallback?.call(
+          data['level'] as String,
+          data['message'] as String,
+        );
+      }
+      return null;
+    });
+  }
+
   static final NordicDfu _singleton = NordicDfu._internal();
 
   static const _namespace = 'dev.steenbakker.nordic_dfu';
   static const MethodChannel _methodChannel =
       MethodChannel('$_namespace/method');
   static const EventChannel _eventChannel = EventChannel('$_namespace/event');
+  static const _logChannel =
+      BasicMessageChannel('$_namespace/log', StandardMessageCodec());
+
+  DFULoggerCallback? _dfuLoggerCallback;
 
   StreamSubscription<void>? _events;
 
@@ -180,5 +198,21 @@ class NordicDfu {
   /// Abort DFU while in progress.
   Future<String?> abortDfu() async {
     return _methodChannel.invokeMethod('abortDfu');
+  }
+
+  /// Attach flutter logger
+  Future<void> attachLoggerCallback(
+    DFULoggerCallback callback,
+  ) {
+    _dfuLoggerCallback = callback;
+    return _methodChannel
+        .invokeMethod('attachLoggerCallback', <String, dynamic>{});
+  }
+
+  /// Remove logger
+  Future<void> removeLoggerCallback() {
+    _dfuLoggerCallback = null;
+    return _methodChannel
+        .invokeMethod('removeLoggerCallback', <String, dynamic>{});
   }
 }
