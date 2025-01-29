@@ -12,22 +12,16 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-<<<<<<< HEAD
 import io.flutter.plugin.common.BasicMessageChannel
 import io.flutter.plugin.common.StandardMessageCodec
-=======
-import no.nordicsemi.android.dfu.DfuBaseService
->>>>>>> upstream/master
 import no.nordicsemi.android.dfu.DfuBaseService.NOTIFICATION_ID
 import no.nordicsemi.android.dfu.DfuProgressListenerAdapter
 import no.nordicsemi.android.dfu.DfuServiceController
 import no.nordicsemi.android.dfu.DfuServiceInitiator
 import no.nordicsemi.android.dfu.DfuServiceListenerHelper
 import java.util.*
-<<<<<<< HEAD
 import no.nordicsemi.android.dfu.DfuBaseService
 import no.nordicsemi.android.dfu.DfuLogListener
-=======
 import android.util.Log
 
 private class DfuProcess(
@@ -49,7 +43,6 @@ private val DFU_SERVICE_CLASSES = arrayListOf(
     // more service classes can be added here to support more parallel DFU processes
     // (make sure to also update AndroidManifest.xml)
 )
->>>>>>> upstream/master
 
 class NordicDfuPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
 
@@ -59,13 +52,10 @@ class NordicDfuPlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHan
     private var eventChannel: EventChannel? = null
     private var logChannel: BasicMessageChannel<Any>? = null
     private var sink: EventChannel.EventSink? = null
-<<<<<<< HEAD
     private var logListener: DfuLogListener? = null
     private var controller: DfuServiceController? = null
-=======
     private var activeDfuMap: MutableMap<String, DfuProcess> = mutableMapOf() 
 
->>>>>>> upstream/master
     private var hasCreateNotification = false
 
     override fun onAttachedToEngine(binding: FlutterPluginBinding) {
