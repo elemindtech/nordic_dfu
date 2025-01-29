@@ -32,6 +32,9 @@ typedef DfuProgressCallback = void Function(
   int totalParts,
 );
 
+/// Callback for registering log events
+typedef DFULoggerCallback = void Function(String level, String message);
+
 /// A class representing event handlers for a Device Firmware Update (DFU) process.
 ///
 /// This class provides a set of callback functions to handle various states and events

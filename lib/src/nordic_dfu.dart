@@ -10,41 +10,6 @@ import 'package:nordic_dfu/src/parameters/android_special_parameter.dart';
 import 'package:nordic_dfu/src/parameters/darwin_parameters.dart';
 import 'package:nordic_dfu/src/parameters/ios_special_parameter.dart';
 
-/// Callback for when dfu status has changed
-/// [address] Device with error
-typedef DfuCallback = void Function(String address);
-
-/// Callback for when dfu has error
-/// [address] Device with error
-/// [error] Error which occurs
-/// [errorType] Error type which has occured
-/// [message] Message that has been thrown with error
-typedef DfuErrorCallback = void Function(
-  String address,
-  int error,
-  int errorType,
-  String message,
-);
-
-/// Callback for when the dfu progress has changed
-/// [address] Device with dfu
-/// [percent] Percentage dfu completed
-/// [speed] Speed of the dfu proces
-/// [avgSpeed] Average speed of the dfu process
-/// [currentPart] Current part being uploaded
-/// [totalParts] All parts that need to be uploaded
-typedef DfuProgressCallback = void Function(
-  String address,
-  int percent,
-  double speed,
-  double avgSpeed,
-  int currentPart,
-  int totalParts,
-);
-
-/// Callback for registering log events
-typedef DFULoggerCallback = void Function(String level, String message);
-
 /// This singleton handles the DFU process.
 class NordicDfu {
   /// Factory for initiating the Singleton
