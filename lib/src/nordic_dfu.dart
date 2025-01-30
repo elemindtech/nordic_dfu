@@ -10,19 +10,36 @@ import 'package:nordic_dfu/src/parameters/android_special_parameter.dart';
 import 'package:nordic_dfu/src/parameters/darwin_parameters.dart';
 import 'package:nordic_dfu/src/parameters/ios_special_parameter.dart';
 
+typedef DFULoggerCallback = void Function(String level, String message);
+
 /// A singleton class to handle the Nordic DFU process.
 class NordicDfu {
   /// Factory for initiating the Singleton
   factory NordicDfu() => _singleton;
 
-  NordicDfu._internal();
+  NordicDfu._internal() {
+    _logChannel.setMessageHandler((data) async {
+      if (data is Map) {
+        _dfuLoggerCallback?.call(
+          data['level'] as String,
+          data['message'] as String,
+        );
+      }
+      return null;
+    });
+  }
+
   static final NordicDfu _singleton = NordicDfu._internal();
 
   static const String _methodChannelName = 'dev.steenbakker.nordic_dfu/method';
   static const String _eventChannelName = 'dev.steenbakker.nordic_dfu/event';
+  static const String _logChannelName = 'dev.steenbakker.nordic_dfu/log';
 
   static const MethodChannel _methodChannel = MethodChannel(_methodChannelName);
   static const EventChannel _eventChannel = EventChannel(_eventChannelName);
+  static const _logChannel = BasicMessageChannel(_logChannelName, StandardMessageCodec());
+
+  DFULoggerCallback? _dfuLoggerCallback;
 
   StreamSubscription<void>? _events;
   final Map<String, DfuEventHandler> _eventHandlerMap = {};
@@ -170,6 +187,21 @@ class NordicDfu {
       'abortDfu',
       address != null ? {'address': address} : <String, dynamic>{},
     );
+  }
+
+    /// Attach flutter logger
+  Future<void> attachLoggerCallback(
+    DFULoggerCallback callback,
+  ) {
+    _dfuLoggerCallback = callback;
+    return _methodChannel
+        .invokeMethod('attachLoggerCallback', <String, dynamic>{});
+  }
+  /// Remove logger
+  Future<void> removeLoggerCallback() {
+    _dfuLoggerCallback = null;
+    return _methodChannel
+        .invokeMethod('removeLoggerCallback', <String, dynamic>{});
   }
 
   /// Disposes of the event stream subscription.
