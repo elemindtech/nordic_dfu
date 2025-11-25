@@ -12,6 +12,7 @@ import 'package:nordic_dfu/src/parameters/ios_special_parameter.dart';
 
 /// Callback for registering log events
 typedef DFULoggerCallback = void Function(String level, String message);
+
 /// Calculates the DFU mode MAC address for Nordic chips.
 /// In DFU mode, the MAC address increments the last byte by 1.
 /// Example: E4:3B:42:3B:88:7E (normal) -> E4:3B:42:3B:88:7F (DFU)
@@ -19,18 +20,17 @@ String _calculateDfuAddress(String normalAddress) {
   try {
     final parts = normalAddress.split(':');
     if (parts.length != 6) return normalAddress;
-    
+
     final lastByte = int.parse(parts[5], radix: 16);
     final dfuLastByte = (lastByte + 1) & 0xFF;
     parts[5] = dfuLastByte.toRadixString(16).toUpperCase().padLeft(2, '0');
-    
+
     return parts.join(':');
   } catch (e) {
     debugPrint('[NordicDfu] Error calculating DFU address: $e');
     return normalAddress;
   }
 }
-
 
 /// A singleton class to handle the Nordic DFU process.
 class NordicDfu {
@@ -55,7 +55,10 @@ class NordicDfu {
 
   static const MethodChannel _methodChannel = MethodChannel(_methodChannelName);
   static const EventChannel _eventChannel = EventChannel(_eventChannelName);
-  static const BasicMessageChannel<dynamic> _logChannel = BasicMessageChannel('dev.steenbakker.nordic_dfu/log', StandardMessageCodec());
+  static const BasicMessageChannel<dynamic> _logChannel = BasicMessageChannel(
+    'dev.steenbakker.nordic_dfu/log',
+    StandardMessageCodec(),
+  );
 
   static DFULoggerCallback? _dfuLoggerCallback;
 
@@ -106,19 +109,21 @@ class NordicDfu {
 
     debugPrint('[NordicDfu] Event: $key for address: $address');
     debugPrint('[NordicDfu] Available handlers: ${_eventHandlerMap.keys}');
-    
+
     // CRITICAL FIX: Nordic DFU Android library sometimes reports incorrect address
     // in progress callbacks (off by one in last byte). Try exact match first,
     // then fuzzy match based on first 5 bytes of MAC address.
     var handler = _eventHandlerMap[address];
-    
+
     if (handler == null && _eventHandlerMap.isNotEmpty) {
       // Try fuzzy match: compare first 5 bytes (first 14 characters) of MAC address
       // Format: XX:XX:XX:XX:XX:YY where we match XX:XX:XX:XX:XX
-      final addressPrefix = address.length >= 14 ? address.substring(0, 14) : address;
-      
+      final addressPrefix =
+          address.length >= 14 ? address.substring(0, 14) : address;
+
       for (final entry in _eventHandlerMap.entries) {
-        final registeredPrefix = entry.key.length >= 14 ? entry.key.substring(0, 14) : entry.key;
+        final registeredPrefix =
+            entry.key.length >= 14 ? entry.key.substring(0, 14) : entry.key;
         if (addressPrefix.toUpperCase() == registeredPrefix.toUpperCase()) {
           debugPrint('[NordicDfu] Using fuzzy match: $address -> ${entry.key}');
           handler = entry.value;
@@ -126,7 +131,7 @@ class NordicDfu {
         }
       }
     }
-    
+
     if (handler == null) {
       debugPrint('[NordicDfu] WARNING: No handler found for address: $address');
     }
@@ -202,12 +207,14 @@ class NordicDfu {
 
     // Register handler for normal address
     _eventHandlerMap[address] = handler;
-    
+
     // Also register for DFU mode address (last byte + 1)
     final dfuAddress = _calculateDfuAddress(address);
     if (dfuAddress != address) {
       _eventHandlerMap[dfuAddress] = handler;
-      debugPrint('[NordicDfu] Registered handler for both $address and $dfuAddress');
+      debugPrint(
+        '[NordicDfu] Registered handler for both $address and $dfuAddress',
+      );
     }
 
     _ensureEventStreamSetup();
@@ -247,18 +254,20 @@ class NordicDfu {
   }
 
   /// Attach flutter logger
-  Future<void> attachLoggerCallback(
-    DFULoggerCallback callback,
-  ) {
+  Future<void> attachLoggerCallback(DFULoggerCallback callback) {
     _dfuLoggerCallback = callback;
-    return _methodChannel
-        .invokeMethod('attachLoggerCallback', <String, dynamic>{});
+    return _methodChannel.invokeMethod(
+      'attachLoggerCallback',
+      <String, dynamic>{},
+    );
   }
 
   /// Remove logger
   Future<void> removeLoggerCallback() {
     _dfuLoggerCallback = null;
-    return _methodChannel
-        .invokeMethod('removeLoggerCallback', <String, dynamic>{});
+    return _methodChannel.invokeMethod(
+      'removeLoggerCallback',
+      <String, dynamic>{},
+    );
   }
 }

@@ -11,10 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 void main() => runApp(const MyApp());
 
 class ExampleDfuState {
-  ExampleDfuState({
-    required this.dfuRunning,
-    this.progressPercent,
-  });
+  ExampleDfuState({required this.dfuRunning, this.progressPercent});
   bool dfuRunning = false;
   int? progressPercent;
 }
@@ -49,14 +46,8 @@ class MyAppState extends State<MyApp> {
         // onError: (string) {
         //   debugPrint('deviceAddress: $string');
         // },
-        onProgressChanged: (
-          deviceAddress,
-          percent,
-          speed,
-          avgSpeed,
-          currentPart,
-          partsTotal,
-        ) {
+        onProgressChanged:
+            (deviceAddress, percent, speed, avgSpeed, currentPart, partsTotal) {
           debugPrint('deviceAddress: $deviceAddress, percent: $percent');
           setState(() {
             dfuStateMap[deviceId]?.progressPercent = percent;
@@ -98,20 +89,20 @@ class MyAppState extends State<MyApp> {
     await scanSubscription?.cancel();
     await FlutterBluePlus.startScan();
     scanResults.clear();
-    scanSubscription = FlutterBluePlus.scanResults.expand((e) => e).listen(
-      (scanResult) {
-        if (scanResults.firstWhereOrNull(
-              (ele) => ele.device.remoteId == scanResult.device.remoteId,
-            ) !=
-            null) {
-          return;
-        }
-        setState(() {
-          /// add result to results if not added
-          scanResults.add(scanResult);
-        });
-      },
-    );
+    scanSubscription = FlutterBluePlus.scanResults.expand((e) => e).listen((
+      scanResult,
+    ) {
+      if (scanResults.firstWhereOrNull(
+            (ele) => ele.device.remoteId == scanResult.device.remoteId,
+          ) !=
+          null) {
+        return;
+      }
+      setState(() {
+        /// add result to results if not added
+        scanResults.add(scanResult);
+      });
+    });
   }
 
   void stopScan() {
@@ -149,9 +140,7 @@ class MyAppState extends State<MyApp> {
           ],
         ),
         body: !hasDevice
-            ? const Center(
-                child: Text('No device'),
-              )
+            ? const Center(child: Text('No device'))
             : ListView.separated(
                 padding: const EdgeInsets.all(8),
                 itemBuilder: _deviceItemBuilder,
@@ -242,10 +231,7 @@ class DeviceItem extends StatelessWidget {
             ),
             TextButton(
               onPressed: onPress,
-              child: Text(
-                _getDfuButtonText(),
-                textAlign: TextAlign.center,
-              ),
+              child: Text(_getDfuButtonText(), textAlign: TextAlign.center),
             ),
           ],
         ),
