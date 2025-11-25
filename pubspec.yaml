@@ -26,3 +26,4 @@ flutter:
       macos:
         pluginClass: NordicDfuPlugin
         sharedDarwinSource: true
+

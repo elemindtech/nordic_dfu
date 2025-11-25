@@ -14,6 +14,8 @@ public class NordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, Log
     let registrar: FlutterPluginRegistrar
     private var sink: FlutterEventSink?
     private var activeDfuMap: [String: DfuProcess] = [:]
+    var messageConnector: FlutterBasicMessageChannel
+    var loggerEnable: Bool = false
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let instance = NordicDfuPlugin(registrar)
@@ -35,6 +37,13 @@ public class NordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, Log
     
     init(_ registrar: FlutterPluginRegistrar) {
         self.registrar = registrar
+
+        #if os(iOS)
+        let messenger = registrar.messenger()
+        #else
+        let messenger = registrar.messenger
+        #endif
+        messageConnector = FlutterBasicMessageChannel(name: "dev.steenbakker.nordic_dfu/log", binaryMessenger: messenger)
         super.init()
     }
 
@@ -42,6 +51,8 @@ public class NordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, Log
         switch call.method {
         case "startDfu": initializeDfu(call, result)
         case "abortDfu" : abortDfu(call, result)
+        case "attachLoggerCallback": attachLoggerCallback(result: result)
+        case "removeLoggerCallback": removeLoggerCallback(result: result)
         default: result(FlutterMethodNotImplemented)
         }
     }
@@ -79,6 +90,16 @@ public class NordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, Log
         }
 
         _ = process.controller?.abort() // Explicitly ignore result of `abort()`
+        result(nil)
+    }
+
+    private func attachLoggerCallback(result: @escaping FlutterResult) {
+        loggerEnable = true
+        result(nil)
+    }
+
+    private func removeLoggerCallback(result: @escaping FlutterResult) {
+        loggerEnable = false
         result(nil)
     }
  
@@ -183,6 +204,9 @@ public class NordicDfuPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, Log
     //MARK: - LoggerDelegate
     public func logWith(_ level: LogLevel, message: String) {
         print("\(level.name()): \(message)")
+        if loggerEnable {
+            messageConnector.sendMessage(["level": level.name(), "message": message])
+        }
     }
 }
 
@@ -289,3 +313,8 @@ public class DeviceScopedDFUDelegate: NSObject, DFUServiceDelegate, DFUProgressD
         )
     }
 }
+
+
+
+
+
