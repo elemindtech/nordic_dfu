@@ -10,52 +10,66 @@ import 'package:permission_handler/permission_handler.dart';
 
 void main() => runApp(const MyApp());
 
-class MyApp extends StatefulWidget {
-  const MyApp({Key? key}) : super(key: key);
-
-  @override
-  _MyAppState createState() => _MyAppState();
+class ExampleDfuState {
+  ExampleDfuState({required this.dfuRunning, this.progressPercent});
+  bool dfuRunning = false;
+  int? progressPercent;
 }
 
-class _MyAppState extends State<MyApp> {
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
+
+  @override
+  MyAppState createState() => MyAppState();
+}
+
+class MyAppState extends State<MyApp> {
   StreamSubscription<ScanResult>? scanSubscription;
   List<ScanResult> scanResults = <ScanResult>[];
-  bool dfuRunning = false;
-  int? dfuRunningInx;
+  Map<String, ExampleDfuState> dfuStateMap = {};
+  bool get anyDfuRunning => dfuStateMap.values.any((state) => state.dfuRunning);
 
   Future<void> doDfu(String deviceId) async {
     stopScan();
-    dfuRunning = true;
+    setState(() {
+      dfuStateMap[deviceId] = ExampleDfuState(dfuRunning: true);
+    });
 
     final result = await FilePicker.platform.pickFiles();
 
     if (result == null) return;
     try {
-      final s = await NordicDfu().startDfu(
-        deviceId,
-        result.files.single.path ?? '',
+      final eventHandler = DfuEventHandler(
         onDeviceDisconnecting: (string) {
           debugPrint('deviceAddress: $string');
         },
-        // onErrorHandle: (string) {
+        // onError: (string) {
         //   debugPrint('deviceAddress: $string');
         // },
-        onProgressChanged: (
-          deviceAddress,
-          percent,
-          speed,
-          avgSpeed,
-          currentPart,
-          partsTotal,
-        ) {
+        onProgressChanged:
+            (deviceAddress, percent, speed, avgSpeed, currentPart, partsTotal) {
           debugPrint('deviceAddress: $deviceAddress, percent: $percent');
+          setState(() {
+            dfuStateMap[deviceId]?.progressPercent = percent;
+          });
         },
-        // androidSpecialParameter: const AndroidSpecialParameter(rebootTime: 1000),
+      );
+
+      final s = await NordicDfu().startDfu(
+        deviceId,
+        result.files.single.path ?? '',
+        dfuEventHandler: eventHandler,
+        androidParameters: const AndroidParameters(rebootTime: 1000),
+        // darwinParameters: const DarwinParameters(),
       );
       debugPrint(s);
-      dfuRunning = false;
+      setState(() {
+        dfuStateMap[deviceId]?.dfuRunning = false;
+      });
     } catch (e) {
-      dfuRunning = false;
+      setState(() {
+        dfuStateMap[deviceId]?.dfuRunning = false;
+      });
       debugPrint(e.toString());
     }
   }
@@ -72,23 +86,23 @@ class _MyAppState extends State<MyApp> {
       ].request();
     }
 
-    scanSubscription?.cancel();
-    FlutterBluePlus.startScan();
+    await scanSubscription?.cancel();
+    await FlutterBluePlus.startScan();
     scanResults.clear();
-    scanSubscription = FlutterBluePlus.scanResults.expand((e) => e).listen(
-      (scanResult) {
-        if (scanResults.firstWhereOrNull(
-              (ele) => ele.device.remoteId == scanResult.device.remoteId,
-            ) !=
-            null) {
-          return;
-        }
-        setState(() {
-          /// add result to results if not added
-          scanResults.add(scanResult);
-        });
-      },
-    );
+    scanSubscription = FlutterBluePlus.scanResults.expand((e) => e).listen((
+      scanResult,
+    ) {
+      if (scanResults.firstWhereOrNull(
+            (ele) => ele.device.remoteId == scanResult.device.remoteId,
+          ) !=
+          null) {
+        return;
+      }
+      setState(() {
+        /// add result to results if not added
+        scanResults.add(scanResult);
+      });
+    });
   }
 
   void stopScan() {
@@ -106,24 +120,27 @@ class _MyAppState extends State<MyApp> {
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(
-          title: const Text('Plugin example app'),
+          title: const Text('Nordic DFU Example App'),
           actions: <Widget>[
+            if (anyDfuRunning)
+              TextButton(
+                onPressed: NordicDfu().abortDfu,
+                child: const Text('Abort Dfu'),
+              ),
             if (isScanning)
               IconButton(
                 icon: const Icon(Icons.pause_circle_filled),
-                onPressed: dfuRunning ? null : stopScan,
+                onPressed: anyDfuRunning ? null : stopScan,
               )
             else
               IconButton(
                 icon: const Icon(Icons.play_arrow),
-                onPressed: dfuRunning ? null : startScan,
+                onPressed: anyDfuRunning ? null : startScan,
               ),
           ],
         ),
         body: !hasDevice
-            ? const Center(
-                child: Text('No device'),
-              )
+            ? const Center(child: Text('No device'))
             : ListView.separated(
                 padding: const EdgeInsets.all(8),
                 itemBuilder: _deviceItemBuilder,
@@ -136,25 +153,13 @@ class _MyAppState extends State<MyApp> {
 
   Widget _deviceItemBuilder(BuildContext context, int index) {
     final result = scanResults[index];
+    final deviceId = result.device.remoteId.str;
     return DeviceItem(
-      isRunningItem: dfuRunningInx == index,
+      dfuState: dfuStateMap[deviceId],
       scanResult: result,
-      onPress: dfuRunning
-          ? () async {
-              await NordicDfu().abortDfu();
-              setState(() {
-                dfuRunningInx = null;
-              });
-            }
-          : () async {
-              setState(() {
-                dfuRunningInx = index;
-              });
-              await doDfu(result.device.remoteId.str);
-              setState(() {
-                dfuRunningInx = null;
-              });
-            },
+      onPress: dfuStateMap[deviceId]?.dfuRunning ?? false
+          ? () => NordicDfu().abortDfu(address: deviceId)
+          : () => doDfu(deviceId),
     );
   }
 }
@@ -182,18 +187,25 @@ class _MyAppState extends State<MyApp> {
 // }
 
 class DeviceItem extends StatelessWidget {
+  const DeviceItem({
+    required this.scanResult,
+    this.onPress,
+    this.dfuState,
+    super.key,
+  });
   final ScanResult scanResult;
 
   final VoidCallback? onPress;
 
-  final bool? isRunningItem;
+  final ExampleDfuState? dfuState;
 
-  const DeviceItem({
-    required this.scanResult,
-    this.onPress,
-    this.isRunningItem,
-    Key? key,
-  }) : super(key: key);
+  String _getDfuButtonText() {
+    final progressText = dfuState?.progressPercent != null
+        ? '\n(${dfuState!.progressPercent}%)'
+        : '';
+    return ((dfuState?.dfuRunning ?? false) ? 'Abort Dfu' : 'Start Dfu') +
+        progressText;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -203,7 +215,7 @@ class DeviceItem extends StatelessWidget {
     }
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(8.0),
+        padding: const EdgeInsets.all(8),
         child: Row(
           children: <Widget>[
             const Icon(Icons.bluetooth),
@@ -219,9 +231,7 @@ class DeviceItem extends StatelessWidget {
             ),
             TextButton(
               onPressed: onPress,
-              child: isRunningItem!
-                  ? const Text('Abort Dfu')
-                  : const Text('Start Dfu'),
+              child: Text(_getDfuButtonText(), textAlign: TextAlign.center),
             ),
           ],
         ),

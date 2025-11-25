@@ -1,45 +1,38 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:nordic_dfu/src/android_special_paramter.dart';
-import 'package:nordic_dfu/src/ios_special_parameter.dart';
-
-/// Callback for when dfu status has changed
-/// [address] Device with error
-typedef DfuCallback = void Function(String address);
-
-/// Callback for when dfu has error
-/// [address] Device with error
-/// [error] Error which occurs
-/// [errorType] Error type which has occured
-/// [message] Message that has been thrown with error
-typedef DfuErrorCallback = void Function(
-  String address,
-  int error,
-  int errorType,
-  String message,
-);
-
-/// Callback for when the dfu progress has changed
-/// [address] Device with dfu
-/// [percent] Percentage dfu completed
-/// [speed] Speed of the dfu proces
-/// [avgSpeed] Average speed of the dfu process
-/// [currentPart] Current part being uploaded
-/// [totalParts] All parts that need to be uploaded
-typedef DfuProgressCallback = void Function(
-  String address,
-  int percent,
-  double speed,
-  double avgSpeed,
-  int currentPart,
-  int totalParts,
-);
+import 'package:nordic_dfu/src/dfu_event_handler.dart';
+import 'package:nordic_dfu/src/parameters/android_parameters.dart';
+import 'package:nordic_dfu/src/parameters/android_special_parameter.dart';
+import 'package:nordic_dfu/src/parameters/darwin_parameters.dart';
+import 'package:nordic_dfu/src/parameters/ios_special_parameter.dart';
 
 /// Callback for registering log events
 typedef DFULoggerCallback = void Function(String level, String message);
 
-/// This singleton handles the DFU process.
+/// Calculates the DFU mode MAC address for Nordic chips.
+/// In DFU mode, the MAC address increments the last byte by 1.
+/// Example: E4:3B:42:3B:88:7E (normal) -> E4:3B:42:3B:88:7F (DFU)
+String _calculateDfuAddress(String normalAddress) {
+  try {
+    final parts = normalAddress.split(':');
+    if (parts.length != 6) return normalAddress;
+
+    final lastByte = int.parse(parts[5], radix: 16);
+    final dfuLastByte = (lastByte + 1) & 0xFF;
+    parts[5] = dfuLastByte.toRadixString(16).toUpperCase().padLeft(2, '0');
+
+    return parts.join(':');
+  } catch (e) {
+    debugPrint('[NordicDfu] Error calculating DFU address: $e');
+    return normalAddress;
+  }
+}
+
+/// A singleton class to handle the Nordic DFU process.
 class NordicDfu {
   /// Factory for initiating the Singleton
   factory NordicDfu() => _singleton;
@@ -55,133 +48,178 @@ class NordicDfu {
       return null;
     });
   }
-
   static final NordicDfu _singleton = NordicDfu._internal();
 
-  static const _namespace = 'dev.steenbakker.nordic_dfu';
-  static const MethodChannel _methodChannel =
-      MethodChannel('$_namespace/method');
-  static const EventChannel _eventChannel = EventChannel('$_namespace/event');
-  static const _logChannel =
-      BasicMessageChannel('$_namespace/log', StandardMessageCodec());
+  static const String _methodChannelName = 'dev.steenbakker.nordic_dfu/method';
+  static const String _eventChannelName = 'dev.steenbakker.nordic_dfu/event';
 
-  DFULoggerCallback? _dfuLoggerCallback;
+  static const MethodChannel _methodChannel = MethodChannel(_methodChannelName);
+  static const EventChannel _eventChannel = EventChannel(_eventChannelName);
+  static const BasicMessageChannel<dynamic> _logChannel = BasicMessageChannel(
+    'dev.steenbakker.nordic_dfu/log',
+    StandardMessageCodec(),
+  );
+
+  static DFULoggerCallback? _dfuLoggerCallback;
 
   StreamSubscription<void>? _events;
+  final Map<String, DfuEventHandler> _eventHandlerMap = {};
 
-  /// Start the DFU Process.
-  /// Required:
-  /// [address] android: mac address iOS: device uuid
-  /// [filePath] zip file path
-  ///
-  /// Optional:
-  /// [name] The device name
-  /// [fileInAsset] if [filePath] is a asset path like 'asset/file.zip', must set this value to true, else false
-  /// [forceDfu] Legacy DFU only, see in nordic library, default is false
-  /// [numberOfPackets] The number of packets of firmware data to be received by the DFU target before sending a new Packet Receipt Notification.
-  /// [enableUnsafeExperimentalButtonlessServiceInSecureDfu] see in nordic library, default is false
-  /// [androidSpecialParameter] this parameters is only used by android lib
-  /// [iosSpecialParameter] this parameters is only used by ios lib
-  ///
-  /// Callbacks:
-  /// [onDeviceConnected] Callback for when device is connected
-  /// [onDeviceConnecting] Callback for when device is connecting
-  /// [onDeviceDisconnected] Callback for when device is disconnected
-  /// [onDeviceDisconnecting] Callback for when device is disconnecting
-  /// [onDfuAborted] Callback for dfu is Aborted
-  /// [onDfuCompleted] Callback for when dfu is completed
-  /// [onDfuProcessStarted] Callback for when dfu has been started
-  /// [onDfuProcessStarting] Callback for when dfu is starting
-  /// [onEnablingDfuMode] Callback for when dfu mode is being enabled
-  /// [onFirmwareValidating] Callback for when dfu is being verified
-  /// [onError] Callback for when dfu has error
-  /// [onProgressChanged] Callback for when the dfu progress has changed
+  void _ensureEventStreamSetup() {
+    if (_events != null) return;
+
+    _events = _eventChannel.receiveBroadcastStream().listen(
+          _onEvent,
+          onError: _onError,
+        );
+  }
+
+  void _onEvent(dynamic data) {
+    if (data is! Map) {
+      debugPrint('Return value is not a map but ${data.runtimeType} $data');
+      return;
+    }
+
+    final events = Map<String, dynamic>.from(data);
+    for (final entry in events.entries) {
+      _handleSingleEvent(entry.key, entry.value);
+    }
+  }
+
+  void _onError(dynamic error) {
+    debugPrint('Error in event stream: $error');
+  }
+
+  void _handleSingleEvent(String key, dynamic value) {
+    if (value == null) {
+      debugPrint('Value is null for key: $key');
+      return;
+    }
+
+    final String address;
+    final Map<String, dynamic>? values;
+
+    if (value is Map) {
+      address = value['deviceAddress'] as String;
+      values = Map<String, dynamic>.from(value);
+    } else {
+      address = value as String;
+      values = null;
+    }
+
+    debugPrint('[NordicDfu] Event: $key for address: $address');
+    debugPrint('[NordicDfu] Available handlers: ${_eventHandlerMap.keys}');
+
+    // CRITICAL FIX: Nordic DFU Android library sometimes reports incorrect address
+    // in progress callbacks (off by one in last byte). Try exact match first,
+    // then fuzzy match based on first 5 bytes of MAC address.
+    var handler = _eventHandlerMap[address];
+
+    if (handler == null && _eventHandlerMap.isNotEmpty) {
+      // Try fuzzy match: compare first 5 bytes (first 14 characters) of MAC address
+      // Format: XX:XX:XX:XX:XX:YY where we match XX:XX:XX:XX:XX
+      final addressPrefix =
+          address.length >= 14 ? address.substring(0, 14) : address;
+
+      for (final entry in _eventHandlerMap.entries) {
+        final registeredPrefix =
+            entry.key.length >= 14 ? entry.key.substring(0, 14) : entry.key;
+        if (addressPrefix.toUpperCase() == registeredPrefix.toUpperCase()) {
+          debugPrint('[NordicDfu] Using fuzzy match: $address -> ${entry.key}');
+          handler = entry.value;
+          break;
+        }
+      }
+    }
+
+    if (handler == null) {
+      debugPrint('[NordicDfu] WARNING: No handler found for address: $address');
+    }
+    handler?.dispatchEvent(key, values, address);
+  }
+
+  /// Starts the DFU process.
   Future<String?> startDfu(
     String address,
     String filePath, {
     String? name,
-    bool? fileInAsset,
-    bool? forceDfu,
+    bool fileInAsset = false,
+    bool forceDfu = false,
     int? numberOfPackets,
-    bool? enableUnsafeExperimentalButtonlessServiceInSecureDfu,
-    AndroidSpecialParameter androidSpecialParameter =
-        const AndroidSpecialParameter(),
-    IosSpecialParameter iosSpecialParameter = const IosSpecialParameter(),
+    bool enableUnsafeExperimentalButtonlessServiceInSecureDfu = false,
+    @Deprecated('Use androidParameters instead')
+    AndroidSpecialParameter? androidSpecialParameter,
+    @Deprecated('Use darwinParameters instead')
+    IosSpecialParameter? iosSpecialParameter,
+    AndroidParameters androidParameters = const AndroidParameters(),
+    DarwinParameters darwinParameters = const DarwinParameters(),
+    DfuEventHandler? dfuEventHandler,
+    @Deprecated('Use dfuEventHandler.onDeviceConnected instead')
     DfuCallback? onDeviceConnected,
+    @Deprecated('Use dfuEventHandler.onDeviceConnecting instead')
     DfuCallback? onDeviceConnecting,
+    @Deprecated('Use dfuEventHandler.onDeviceDisconnected instead')
     DfuCallback? onDeviceDisconnected,
+    @Deprecated('Use dfuEventHandler.onDeviceDisconnecting instead')
     DfuCallback? onDeviceDisconnecting,
+    @Deprecated('Use dfuEventHandler.onDfuAborted instead')
     DfuCallback? onDfuAborted,
+    @Deprecated('Use dfuEventHandler.onDfuCompleted instead')
     DfuCallback? onDfuCompleted,
+    @Deprecated('Use dfuEventHandler.onDfuProcessStarted instead')
     DfuCallback? onDfuProcessStarted,
+    @Deprecated('Use dfuEventHandler.onDfuProcessStarting instead')
     DfuCallback? onDfuProcessStarting,
+    @Deprecated('Use dfuEventHandler.onEnablingDfuMode instead')
     DfuCallback? onEnablingDfuMode,
+    @Deprecated('Use dfuEventHandler.onFirmwareValidating instead')
     DfuCallback? onFirmwareValidating,
+    @Deprecated('Use dfuEventHandler.onError instead')
     DfuErrorCallback? onError,
+    @Deprecated('Use dfuEventHandler.onProgressChanged instead')
     DfuProgressCallback? onProgressChanged,
   }) async {
-    _events = _eventChannel.receiveBroadcastStream().listen((data) {
-      data as Map;
-      for (final key in data.keys) {
-        switch (key) {
-          case 'onDeviceConnected':
-            onDeviceConnected?.call(data[key] as String);
-            break;
-          case 'onDeviceConnecting':
-            onDeviceConnecting?.call(data[key] as String);
-            break;
-          case 'onDeviceDisconnected':
-            onDeviceDisconnected?.call(data[key] as String);
-            break;
-          case 'onDeviceDisconnecting':
-            onDeviceDisconnecting?.call(data[key] as String);
-            break;
-          case 'onDfuAborted':
-            onDfuAborted?.call(data[key] as String);
-            _events?.cancel();
-            break;
-          case 'onDfuCompleted':
-            onDfuCompleted?.call(data[key] as String);
-            _events?.cancel();
-            break;
-          case 'onDfuProcessStarted':
-            onDfuProcessStarted?.call(data[key] as String);
-            break;
-          case 'onDfuProcessStarting':
-            onDfuProcessStarting?.call(data[key] as String);
-            break;
-          case 'onEnablingDfuMode':
-            onEnablingDfuMode?.call(data[key] as String);
-            break;
-          case 'onFirmwareValidating':
-            onFirmwareValidating?.call(data[key] as String);
-            break;
-          case 'onError':
-            final result = Map<String, dynamic>.from(data[key] as Map);
-            onError?.call(
-              result['deviceAddress'] as String,
-              result['error'] as int,
-              result['errorType'] as int,
-              result['message'] as String,
-            );
-            _events?.cancel();
-            break;
-          case 'onProgressChanged':
-            final result = Map<String, dynamic>.from(data[key] as Map);
-            onProgressChanged?.call(
-              result['deviceAddress'] as String,
-              result['percent'] as int,
-              result['speed'] as double,
-              result['avgSpeed'] as double,
-              result['currentPart'] as int,
-              result['partsTotal'] as int,
-            );
-            break;
-        }
-      }
-    });
+    // Register event handler for both normal and DFU mode addresses
+    // Nordic chips increment the last byte of MAC address when entering DFU mode
+    final handler = DfuEventHandler(
+      onDeviceConnected:
+          dfuEventHandler?.onDeviceConnected ?? onDeviceConnected,
+      onDeviceConnecting:
+          dfuEventHandler?.onDeviceConnecting ?? onDeviceConnecting,
+      onDeviceDisconnected:
+          dfuEventHandler?.onDeviceDisconnected ?? onDeviceDisconnected,
+      onDeviceDisconnecting:
+          dfuEventHandler?.onDeviceDisconnecting ?? onDeviceDisconnecting,
+      onDfuAborted: dfuEventHandler?.onDfuAborted ?? onDfuAborted,
+      onDfuCompleted: dfuEventHandler?.onDfuCompleted ?? onDfuCompleted,
+      onDfuProcessStarted:
+          dfuEventHandler?.onDfuProcessStarted ?? onDfuProcessStarted,
+      onDfuProcessStarting:
+          dfuEventHandler?.onDfuProcessStarting ?? onDfuProcessStarting,
+      onEnablingDfuMode:
+          dfuEventHandler?.onEnablingDfuMode ?? onEnablingDfuMode,
+      onFirmwareValidating:
+          dfuEventHandler?.onFirmwareValidating ?? onFirmwareValidating,
+      onError: dfuEventHandler?.onError ?? onError,
+      onProgressChanged:
+          dfuEventHandler?.onProgressChanged ?? onProgressChanged,
+    );
 
-    return _methodChannel.invokeMethod('startDfu', <String, dynamic>{
+    // Register handler for normal address
+    _eventHandlerMap[address] = handler;
+
+    // Also register for DFU mode address (last byte + 1)
+    final dfuAddress = _calculateDfuAddress(address);
+    if (dfuAddress != address) {
+      _eventHandlerMap[dfuAddress] = handler;
+      debugPrint(
+        '[NordicDfu] Registered handler for both $address and $dfuAddress',
+      );
+    }
+
+    _ensureEventStreamSetup();
+
+    return _methodChannel.invokeMethod('startDfu', {
       'address': address,
       'filePath': filePath,
       'name': name,
@@ -190,29 +228,46 @@ class NordicDfu {
       'numberOfPackets': numberOfPackets,
       'enableUnsafeExperimentalButtonlessServiceInSecureDfu':
           enableUnsafeExperimentalButtonlessServiceInSecureDfu,
-      ...androidSpecialParameter.toJson(),
-      ...iosSpecialParameter.toJson(),
+      ...(androidSpecialParameter?.toJson() ?? androidParameters.toJson()),
+      ...(iosSpecialParameter?.toJson() ?? darwinParameters.toJson()),
     });
   }
 
-  /// Abort DFU while in progress.
-  Future<String?> abortDfu() async {
-    return _methodChannel.invokeMethod('abortDfu');
+  /// Aborts the DFU process.
+  Future<String?> abortDfu({String? address}) async {
+    if (address != null && Platform.isAndroid) {
+      debugPrint(
+        '[NordicDfu:abortDfu] Warning: aborting all DFU processes on Android',
+      );
+    }
+
+    return _methodChannel.invokeMethod(
+      'abortDfu',
+      address != null ? {'address': address} : <String, dynamic>{},
+    );
+  }
+
+  /// Disposes of the event stream subscription.
+  void dispose() {
+    _events?.cancel();
+    _events = null;
   }
 
   /// Attach flutter logger
-  Future<void> attachLoggerCallback(
-    DFULoggerCallback callback,
-  ) {
+  Future<void> attachLoggerCallback(DFULoggerCallback callback) {
     _dfuLoggerCallback = callback;
-    return _methodChannel
-        .invokeMethod('attachLoggerCallback', <String, dynamic>{});
+    return _methodChannel.invokeMethod(
+      'attachLoggerCallback',
+      <String, dynamic>{},
+    );
   }
 
   /// Remove logger
   Future<void> removeLoggerCallback() {
     _dfuLoggerCallback = null;
-    return _methodChannel
-        .invokeMethod('removeLoggerCallback', <String, dynamic>{});
+    return _methodChannel.invokeMethod(
+      'removeLoggerCallback',
+      <String, dynamic>{},
+    );
   }
 }
